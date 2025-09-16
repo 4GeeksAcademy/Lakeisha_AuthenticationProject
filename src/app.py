@@ -25,14 +25,16 @@ app.config['JWT_SECRET_KEY'] = os.getenv(
     'FLASK_APP_KEY', 'your-secret-key-change-in-production')
 app.config['DEBUG'] = ENV
 
-# Initialize extensions
+# Initialize CORS with proper origins
 CORS(app, origins=[
     "http://localhost:3000",
     "https://*.gitpod.io",
     "https://*.github.dev",
-    # Add your specific Codespaces URL
-    "https://fuzzy-enigma-q7xp59vrqwggcwx6-3000.app.github.dev"
+    # Your specific Codespaces URL (fixed spelling)
+    "https://fuzzy-enigma-q7xp59vrgwggcwx6-3000.app.github.dev"
 ])
+
+# Initialize extensions
 db.init_app(app)
 Migrate(app, db)
 
@@ -89,6 +91,7 @@ def serve_any_other_file(path):
 
 @app.after_request
 def after_request(response):
+    # Additional CORS headers for extra compatibility
     response.headers.add('Access-Control-Allow-Origin', '*')
     response.headers.add('Access-Control-Allow-Headers',
                          'Content-Type,Authorization')
