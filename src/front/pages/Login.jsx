@@ -1,90 +1,87 @@
 import React, { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
+import { useNavigate } from "react-router-dom";
 
 const Login = () => {
     const [formData, setFormData] = useState({
         email: "",
         password: ""
     });
-    const [loading, setLoading] = useState(false);
     const [error, setError] = useState("");
-
+    const [isLoading, setIsLoading] = useState(false);
     const navigate = useNavigate();
+
+    // Fix: Use Vite environment variables
+    const getBackendUrl = () => {
+        // Use Vite environment variable
+        if (import.meta.env.VITE_BACKEND_URL) {
+            return import.meta.env.VITE_BACKEND_URL;
+        }
+
+        // Fallback: construct URL based on current location
+        const currentUrl = window.location.href;
+        if (currentUrl.includes('3000')) {
+            return currentUrl.replace('3000.app.github.dev', '3001.app.github.dev').split('/')[0] + '//' + currentUrl.split('//')[1].split('/')[0].replace('3000', '3001');
+        }
+
+        // Default fallback
+        return 'http://localhost:3001';
+    };
 
     const handleChange = (e) => {
         setFormData({
             ...formData,
             [e.target.name]: e.target.value
         });
-        // Clear error when user starts typing
-        if (error) setError("");
-    };
-
-    const validateForm = () => {
-        if (!formData.email || !formData.password) {
-            setError("Email and password are required");
-            return false;
-        }
-
-        // Basic email validation
-        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-        if (!emailRegex.test(formData.email)) {
-            setError("Please enter a valid email address");
-            return false;
-        }
-
-        return true;
     };
 
     const handleSubmit = async (e) => {
         e.preventDefault();
-
-        if (!validateForm()) return;
-
-        setLoading(true);
         setError("");
+        setIsLoading(true);
 
         try {
-            const response = await fetch(`${import.meta.env.VITE_BACKEND_URL}/api/login`, {
+            const backendUrl = getBackendUrl();
+            console.log("Using backend URL:", backendUrl); // Debug log
+
+            const response = await fetch(`${backendUrl}/api/login`, {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json",
                 },
-                body: JSON.stringify({
-                    email: formData.email.toLowerCase().trim(),
-                    password: formData.password
-                })
+                body: JSON.stringify(formData)
             });
 
             const data = await response.json();
 
             if (response.ok) {
-                // Store token and user data
+                // Save the token and user data
                 sessionStorage.setItem("token", data.token);
-                sessionStorage.setItem("user", JSON.stringify(data.user));
+                if (data.user) {
+                    sessionStorage.setItem("user", JSON.stringify(data.user));
+                }
 
-                // Redirect to private dashboard
-                navigate("/private");
+                console.log("Login successful! Token saved:", data.token);
 
-                // Optional: Reload page to update navbar
-                window.location.reload();
+                // Redirect to protected dashboard
+                navigate("/dashboard");
             } else {
-                setError(data.error || "Invalid email or password");
+                // Handle login errors
+                setError(data.message || "Login failed. Please try again.");
             }
-        } catch (err) {
-            setError("Network error. Please try again.");
-            console.error("Login error:", err);
+        } catch (error) {
+            console.error("Login error:", error);
+            setError("Network error. Please check your connection and try again.");
         } finally {
-            setLoading(false);
+            setIsLoading(false);
         }
     };
 
     return (
         <div className="container mt-5">
             <div className="row justify-content-center">
-                <div className="col-md-6 col-lg-4">
-                    <div className="card shadow">
-                        <div className="card-body p-4">
+                <div className="col-md-6">
+                    <div className="card">
+                        <div className="card-body">
                             <h2 className="card-title text-center mb-4">Login</h2>
 
                             {error && (
@@ -95,9 +92,7 @@ const Login = () => {
 
                             <form onSubmit={handleSubmit}>
                                 <div className="mb-3">
-                                    <label htmlFor="email" className="form-label">
-                                        Email Address
-                                    </label>
+                                    <label htmlFor="email" className="form-label">Email</label>
                                     <input
                                         type="email"
                                         className="form-control"
@@ -106,15 +101,12 @@ const Login = () => {
                                         value={formData.email}
                                         onChange={handleChange}
                                         required
-                                        disabled={loading}
-                                        placeholder="Enter your email"
+                                        disabled={isLoading}
                                     />
                                 </div>
 
-                                <div className="mb-4">
-                                    <label htmlFor="password" className="form-label">
-                                        Password
-                                    </label>
+                                <div className="mb-3">
+                                    <label htmlFor="password" className="form-label">Password</label>
                                     <input
                                         type="password"
                                         className="form-control"
@@ -123,17 +115,16 @@ const Login = () => {
                                         value={formData.password}
                                         onChange={handleChange}
                                         required
-                                        disabled={loading}
-                                        placeholder="Enter your password"
+                                        disabled={isLoading}
                                     />
                                 </div>
 
                                 <button
                                     type="submit"
                                     className="btn btn-primary w-100"
-                                    disabled={loading}
+                                    disabled={isLoading}
                                 >
-                                    {loading ? (
+                                    {isLoading ? (
                                         <>
                                             <span className="spinner-border spinner-border-sm me-2" role="status" aria-hidden="true"></span>
                                             Logging in...
@@ -145,21 +136,7 @@ const Login = () => {
                             </form>
 
                             <div className="text-center mt-3">
-                                <p className="mb-0">
-                                    Don't have an account?{" "}
-                                    <Link to="/signup" className="text-decoration-none">
-                                        Sign up here
-                                    </Link>
-                                </p>
-                            </div>
-
-                            {/* Demo credentials for testing */}
-                            <div className="mt-4 p-3 bg-light rounded">
-                                <small className="text-muted">
-                                    <strong>Demo Credentials:</strong><br />
-                                    Email: admin@test.com<br />
-                                    Password: admin123
-                                </small>
+                                <p>Don't have an account? <a href="/signup">Sign up here</a></p>
                             </div>
                         </div>
                     </div>

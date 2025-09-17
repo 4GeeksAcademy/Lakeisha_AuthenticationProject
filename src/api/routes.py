@@ -1,35 +1,29 @@
 """
 This module takes care of starting the API Server, Loading the DB and Adding the endpoints
 """
-from flask import Flask, request, jsonify, url_for, Blueprint
+from flask import request, jsonify, Blueprint
 from api.models import db, User
 from api.utils import generate_sitemap, APIException
 import re
 
 api = Blueprint('api', __name__)
 
-# Remove this line - CORS is already configured in app.py
-# CORS(api)
-
-
 def validate_email(email):
     """Validate email format"""
     pattern = r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$'
     return re.match(pattern, email) is not None
 
-
 def validate_password(password):
     """Validate password strength"""
     return len(password) >= 6
 
-
 @api.route('/hello', methods=['POST', 'GET'])
 def handle_hello():
+    """Test endpoint"""
     response_body = {
         "message": "Hello! I'm a message that came from the backend, check the network tab on the google inspector and you will see the GET request"
     }
     return jsonify(response_body), 200
-
 
 @api.route('/signup', methods=['POST'])
 def signup():
@@ -39,49 +33,46 @@ def signup():
         data = request.get_json()
 
         if not data:
-            raise APIException("No data provided", status_code=400)
+            return jsonify({"message": "No data provided"}), 400
 
         email = data.get('email', '').strip().lower()
         password = data.get('password', '')
 
         # Validate input
         if not email or not password:
-            raise APIException(
-                "Email and password are required", status_code=400)
+            return jsonify({"message": "Email and password are required"}), 400
 
         if not validate_email(email):
-            raise APIException("Invalid email format", status_code=400)
+            return jsonify({"message": "Invalid email format"}), 400
 
         if not validate_password(password):
-            raise APIException(
-                "Password must be at least 6 characters long", status_code=400)
+            return jsonify({"message": "Password must be at least 6 characters long"}), 400
 
         # Check if user already exists
-        existing_user = User.query.filter_by(email=email).first()
+        existing_user = User.get_user_by_email(email)
         if existing_user:
-            raise APIException(
-                "User with this email already exists", status_code=409)
+            return jsonify({"message": "User with this email already exists"}), 409
 
-        # Create new user
-        new_user = User()
-        new_user.email = email
-        new_user.set_password(password)
+        # Create new user using your static method
+        new_user = User.create_user(email, password)
 
         # Save to database
         db.session.add(new_user)
         db.session.commit()
 
+        # Generate token for immediate login after signup
+        token = new_user.generate_token()
+
         return jsonify({
             "message": "User created successfully",
+            "token": token,
             "user": new_user.serialize()
         }), 201
 
-    except APIException as e:
-        return jsonify({"error": str(e)}), e.status_code
     except Exception as e:
         db.session.rollback()
-        return jsonify({"error": "Internal server error"}), 500
-
+        print(f"Signup error: {str(e)}")
+        return jsonify({"message": "Internal server error"}), 500
 
 @api.route('/login', methods=['POST'])
 def login():
@@ -91,30 +82,32 @@ def login():
         data = request.get_json()
 
         if not data:
-            raise APIException("No data provided", status_code=400)
+            return jsonify({"message": "No data provided"}), 400
 
         email = data.get('email', '').strip().lower()
         password = data.get('password', '')
 
         # Validate input
         if not email or not password:
-            raise APIException(
-                "Email and password are required", status_code=400)
+            return jsonify({"message": "Email and password are required"}), 400
 
-        # Find user
-        user = User.query.filter_by(email=email).first()
+        # Find user using your static method
+        user = User.get_user_by_email(email)
 
         if not user or not user.check_password(password):
-            raise APIException("Invalid email or password", status_code=401)
+            return jsonify({"message": "Invalid email or password"}), 401
 
         if not user.is_active:
-            raise APIException("Account is deactivated", status_code=401)
+            return jsonify({"message": "Account is deactivated"}), 401
+
+        # Update last login
+        user.update_last_login()
 
         # Generate token
         token = user.generate_token()
 
         if not token:
-            raise APIException("Could not generate token", status_code=500)
+            return jsonify({"message": "Could not generate token"}), 500
 
         return jsonify({
             "message": "Login successful",
@@ -122,91 +115,9 @@ def login():
             "user": user.serialize()
         }), 200
 
-    except APIException as e:
-        return jsonify({"error": str(e)}), e.status_code
     except Exception as e:
-        return jsonify({"error": "Internal server error"}), 500
-
-
-@api.route('/protected', methods=['GET'])
-def protected():
-    """Protected route that requires authentication"""
-    try:
-        # Get token from Authorization header
-        auth_header = request.headers.get('Authorization')
-
-        if not auth_header:
-            raise APIException(
-                "Authorization header is required", status_code=401)
-
-        # Extract token from "Bearer <token>"
-        try:
-            token = auth_header.split(" ")[1]
-        except IndexError:
-            raise APIException(
-                "Invalid authorization header format", status_code=401)
-
-        # Decode token
-        payload = User.decode_token(token)
-
-        if not payload:
-            raise APIException("Invalid or expired token", status_code=401)
-
-        # Get user from database
-        user = User.query.get(payload['user_id'])
-
-        if not user or not user.is_active:
-            raise APIException("User not found or inactive", status_code=401)
-
-        return jsonify({
-            "message": "Access granted to protected route",
-            "user": user.serialize()
-        }), 200
-
-    except APIException as e:
-        return jsonify({"error": str(e)}), e.status_code
-    except Exception as e:
-        return jsonify({"error": "Internal server error"}), 500
-
-
-@api.route('/user/profile', methods=['GET'])
-def get_profile():
-    """Get current user profile"""
-    try:
-        # Get token from Authorization header
-        auth_header = request.headers.get('Authorization')
-
-        if not auth_header:
-            raise APIException(
-                "Authorization header is required", status_code=401)
-
-        try:
-            token = auth_header.split(" ")[1]
-        except IndexError:
-            raise APIException(
-                "Invalid authorization header format", status_code=401)
-
-        # Decode token
-        payload = User.decode_token(token)
-
-        if not payload:
-            raise APIException("Invalid or expired token", status_code=401)
-
-        # Get user from database
-        user = User.query.get(payload['user_id'])
-
-        if not user:
-            raise APIException("User not found", status_code=404)
-
-        return jsonify({
-            "user": user.serialize()
-        }), 200
-
-    except APIException as e:
-        return jsonify({"error": str(e)}), e.status_code
-    except Exception as e:
-        return jsonify({"error": "Internal server error"}), 500
-
+        print(f"Login error: {str(e)}")
+        return jsonify({"message": "Internal server error"}), 500
 
 @api.route('/validate-token', methods=['POST'])
 def validate_token():
@@ -216,32 +127,104 @@ def validate_token():
         token = data.get('token') if data else None
 
         if not token:
-            raise APIException("Token is required", status_code=400)
+            return jsonify({"valid": False, "message": "Token is required"}), 400
 
-        # Decode token
+        # Decode token using your static method
         payload = User.decode_token(token)
 
         if not payload:
-            raise APIException("Invalid or expired token", status_code=401)
+            return jsonify({"valid": False, "message": "Invalid or expired token"}), 401
 
         # Get user from database
         user = User.query.get(payload['user_id'])
 
         if not user or not user.is_active:
-            raise APIException("User not found or inactive", status_code=401)
+            return jsonify({"valid": False, "message": "User not found or inactive"}), 401
 
         return jsonify({
             "valid": True,
             "user": user.serialize()
         }), 200
 
-    except APIException as e:
-        return jsonify({
-            "valid": False,
-            "error": str(e)
-        }), e.status_code
     except Exception as e:
+        print(f"Token validation error: {str(e)}")
+        return jsonify({"valid": False, "message": "Internal server error"}), 500
+
+@api.route('/protected', methods=['GET'])
+def protected():
+    """Protected route that requires authentication"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+
+        if not auth_header:
+            return jsonify({"message": "Authorization header is required"}), 401
+
+        # Extract token from "Bearer <token>"
+        try:
+            token = auth_header.split(" ")[1]
+        except IndexError:
+            return jsonify({"message": "Invalid authorization header format"}), 401
+
+        # Decode token
+        payload = User.decode_token(token)
+
+        if not payload:
+            return jsonify({"message": "Invalid or expired token"}), 401
+
+        # Get user from database
+        user = User.query.get(payload['user_id'])
+
+        if not user or not user.is_active:
+            return jsonify({"message": "User not found or inactive"}), 401
+
         return jsonify({
-            "valid": False,
-            "error": "Internal server error"
-        }), 500
+            "message": "Access granted to protected route",
+            "user": user.serialize()
+        }), 200
+
+    except Exception as e:
+        print(f"Protected route error: {str(e)}")
+        return jsonify({"message": "Internal server error"}), 500
+
+@api.route('/user/profile', methods=['GET'])
+def get_profile():
+    """Get current user profile"""
+    try:
+        # Get token from Authorization header
+        auth_header = request.headers.get('Authorization')
+
+        if not auth_header:
+            return jsonify({"message": "Authorization header is required"}), 401
+
+        try:
+            token = auth_header.split(" ")[1]
+        except IndexError:
+            return jsonify({"message": "Invalid authorization header format"}), 401
+
+        # Decode token
+        payload = User.decode_token(token)
+
+        if not payload:
+            return jsonify({"message": "Invalid or expired token"}), 401
+
+        # Get user from database
+        user = User.query.get(payload['user_id'])
+
+        if not user:
+            return jsonify({"message": "User not found"}), 404
+
+        return jsonify({
+            "user": user.serialize()
+        }), 200
+
+    except Exception as e:
+        print(f"Profile error: {str(e)}")
+        return jsonify({"message": "Internal server error"}), 500
+
+@api.route('/logout', methods=['POST'])
+def logout():
+    """Logout endpoint (client-side token removal)"""
+    return jsonify({
+        "message": "Logout successful. Please remove token from client storage."
+    }), 200
